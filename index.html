@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1" />
+	<title>Slope & Intercept Playground</title>
+	<style>
+		:root{--bg:#0f1724;--card:#0b1220;--accent:#7dd3fc;--muted:#94a3b8}
+		html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Arial;background:linear-gradient(180deg,#071028 0%,#071a2b 70%);color:#e6eef6}
+		.wrap{max-width:980px;margin:28px auto;padding:18px;background:rgba(255,255,255,0.02);border-radius:10px;box-shadow:0 6px 30px rgba(2,6,23,0.7)}
+		header{display:flex;gap:16px;align-items:center}
+		h1{font-size:18px;margin:0}
+		.controls{display:flex;gap:12px;flex-wrap:wrap;margin-top:14px}
+		.control{background:var(--card);padding:10px;border-radius:8px;min-width:180px}
+		label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+		input[type=number],input[type=range]{width:100%}
+		.row{display:flex;gap:12px}
+		#plot{width:100%;height:520px;border-radius:8px;background:#021023;display:block}
+		.meta{margin-left:auto;text-align:right;font-size:13px;color:var(--muted)}
+		.footer{display:flex;justify-content:space-between;margin-top:12px;color:var(--muted);font-size:13px}
+		.badge{color:var(--accent);font-weight:600}
+		@media(max-width:640px){.controls{flex-direction:column}.meta{margin-left:0;text-align:left}}
+	</style>
+</head>
+<body>
+	<main class="wrap">
+		<header>
+			<h1>Slope & Intercept Playground</h1>
+			<div class="meta">Enter slope (m) and intercept (b) — the line y = m·x + b updates live</div>
+		</header>
+
+		<div class="controls">
+			<div class="control">
+				<label for="slope">Slope (m)</label>
+				<div class="row">
+					<input id="slope" type="range" min="-10" max="10" step="0.1" value="1">
+					<input id="slope-num" type="number" min="-100" max="100" step="0.1" value="1">
+				</div>
+			</div>
+
+			<div class="control">
+				<label for="intercept">Intercept (b)</label>
+				<div class="row">
+					<input id="intercept" type="range" min="-50" max="50" step="0.1" value="0">
+					<input id="intercept-num" type="number" min="-500" max="500" step="0.1" value="0">
+				</div>
+			</div>
+
+					<div class="control" style="flex:1">
+						<label>View range (x)</label>
+						<div class="row">
+							<input id="xmin" type="number" value="-10" step="1">
+							<input id="xmax" type="number" value="10" step="1">
+						</div>
+					</div>
+
+					<div class="control" style="flex:1">
+						<label>View range (y)</label>
+						<div class="row">
+							<input id="ymin" type="number" value="-10" step="1">
+							<input id="ymax" type="number" value="10" step="1">
+						</div>
+					</div>
+
+			<div class="control">
+				<label>Formula</label>
+				<div id="formula" style="font-weight:700">y = 1·x + 0</div>
+			</div>
+		</div>
+
+		<canvas id="plot"></canvas>
+
+		<div class="footer">
+			<div>Interactive demo — no frameworks, no backend</div>
+			<div class="badge">Canvas · 2D</div>
+		</div>
+	</main>
+
+	<script>
+		// Minimal plotting helpers
+		const canvas = document.getElementById('plot');
+		const ctx = canvas.getContext('2d');
+		function resize() {
+			const dpr = window.devicePixelRatio || 1;
+			canvas.width = Math.floor(canvas.clientWidth * dpr);
+			canvas.height = Math.floor(canvas.clientHeight * dpr);
+			ctx.setTransform(dpr,0,0,dpr,0,0);
+			draw();
+		}
+
+		// Elements
+		const slope = document.getElementById('slope');
+		const slopeNum = document.getElementById('slope-num');
+		const intercept = document.getElementById('intercept');
+		const interceptNum = document.getElementById('intercept-num');
+		const xminEl = document.getElementById('xmin');
+		const xmaxEl = document.getElementById('xmax');
+		const formula = document.getElementById('formula');
+
+		// Sync range <> number inputs
+		function syncRangeAndNumber(range, num){
+			range.addEventListener('input', ()=>{ num.value = range.value; draw(); });
+			num.addEventListener('input', ()=>{ range.value = num.value; draw(); });
+		}
+		syncRangeAndNumber(slope, slopeNum);
+		syncRangeAndNumber(intercept, interceptNum);
+
+			// compute clipped segment of y = m*x + b inside view box
+			function clippedSegment(m,b,xmin,xmax,ymin,ymax){
+				// potential points: endpoints at xmin/xmax, and intersections with ymin/ymax
+				const pts = [];
+				function pushIfIn(x,y){
+					if (x >= xmin - 1e-9 && x <= xmax + 1e-9 && y >= ymin - 1e-9 && y <= ymax + 1e-9) pts.push({x,y});
+				}
+				// endpoints
+				pushIfIn(xmin, m*xmin + b);
+				pushIfIn(xmax, m*xmax + b);
+				// intersections with horizontal boundaries y = ymin/ymax => x = (y - b)/m when m != 0
+				if (Math.abs(m) > 1e-12){
+					const xi1 = (ymin - b)/m; pushIfIn(xi1, ymin);
+					const xi2 = (ymax - b)/m; pushIfIn(xi2, ymax);
+				} else {
+					// horizontal line y=b -> if within y bounds, use full x span
+					if (b >= ymin && b <= ymax){ pushIfIn(xmin, b); pushIfIn(xmax, b); }
+				}
+				// remove duplicates (by coordinates)
+				const unique = [];
+				pts.forEach(p => {
+					if (!unique.some(q => Math.abs(q.x-p.x) < 1e-6 && Math.abs(q.y-p.y) < 1e-6)) unique.push(p);
+				});
+				// need exactly two points to draw a segment; if more, pick extreme by x or y
+				if (unique.length < 2) return null;
+				// pick two points that are farthest apart
+				let a=unique[0], bpt=unique[1]; let maxd=-1;
+				for (let i=0;i<unique.length;i++) for (let j=i+1;j<unique.length;j++){
+					const dx = unique[i].x-unique[j].x, dy = unique[i].y-unique[j].y; const d = dx*dx+dy*dy;
+					if (d>maxd){ maxd=d; a=unique[i]; bpt=unique[j]; }
+				}
+				return [a,bpt];
+			}
+
+			// core draw
+		function draw(){
+			const w = canvas.clientWidth, h = canvas.clientHeight;
+			ctx.clearRect(0,0,w,h);
+				// data range (now user-controlled; we no longer auto-scale to the line)
+				const xmin = parseFloat(xminEl.value) || -10;
+				const xmax = parseFloat(xmaxEl.value) || 10;
+				const ymin = parseFloat(document.getElementById('ymin').value) || -10;
+				const ymax = parseFloat(document.getElementById('ymax').value) || 10;
+				const m = parseFloat(slope.value) || 0;
+				const b = parseFloat(intercept.value) || 0;
+
+			// transform helpers
+			const toX = x => ( (x - xmin) / (xmax - xmin) ) * w;
+			const toY = y => h - ( (y - ymin) / (ymax - ymin) ) * h;
+
+			// grid
+			ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 1;
+			for (let gx = Math.ceil(xmin); gx <= Math.floor(xmax); gx++){
+				const x = toX(gx);
+				ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+			}
+			const niceYStep = (ymax - ymin) / 8;
+			for (let i=0;i<9;i++){
+				const yv = ymin + i*niceYStep; const y = toY(yv);
+				ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+			}
+
+			// axes (x=0, y=0)
+			ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 2;
+			if (xmin <= 0 && xmax >= 0){ const x0 = toX(0); ctx.beginPath(); ctx.moveTo(x0,0); ctx.lineTo(x0,h); ctx.stroke(); }
+			if (ymin <= 0 && ymax >= 0){ const y0 = toY(0); ctx.beginPath(); ctx.moveTo(0,y0); ctx.lineTo(w,y0); ctx.stroke(); }
+
+			// axis labels
+			ctx.fillStyle = 'rgba(230,238,246,0.9)'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+			for (let gx = Math.ceil(xmin); gx <= Math.floor(xmax); gx++){
+				const x = toX(gx);
+				ctx.fillText(gx.toString(), x, h - 6);
+			}
+			ctx.textAlign = 'right';
+			const ny = 6;
+			for (let i=0;i<9;i++){
+				const yv = (ymin + i*niceYStep);
+				const y = toY(yv);
+				ctx.fillText(Number(yv.toFixed(1)).toString(), w-6, y+4);
+			}
+
+					// draw clipped line segment inside the fixed view rectangle
+					const seg = clippedSegment(m,b,xmin,xmax,ymin,ymax);
+					if (seg){
+						const p0 = seg[0], p1 = seg[1];
+						ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 3; ctx.beginPath();
+						ctx.moveTo(toX(p0.x), toY(p0.y)); ctx.lineTo(toX(p1.x), toY(p1.y)); ctx.stroke();
+					} else {
+						// nothing visible inside view - draw nothing (optional: draw offscreen faint line)
+					}
+
+			// marker: intercept on y-axis (x=0)
+			if (xmin <= 0 && xmax >= 0){ const ix = toX(0), iy = toY(b);
+				ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ix, iy, 4, 0, Math.PI*2); ctx.fill();
+				ctx.fillStyle = '#7dd3fc'; ctx.font = '12px system-ui'; ctx.textAlign='left'; ctx.fillText(`(0, ${b.toFixed(2)})`, ix+8, iy-8);
+			}
+
+			// update formula text
+			formula.textContent = `y = ${m}·x + ${b}`;
+		}
+
+		// initial layout
+		function init(){
+			// size canvas to container
+			canvas.style.width = '100%'; canvas.style.height = '520px';
+			window.addEventListener('resize', resize);
+			// redraw when controls change
+			[slope, slopeNum, intercept, interceptNum, xminEl, xmaxEl].forEach(el => el.addEventListener('input', draw));
+			// ensure sync initially
+			slopeNum.value = slope.value; interceptNum.value = intercept.value;
+			resize();
+		}
+
+		init();
+	</script>
+</body>
+</html>
+
